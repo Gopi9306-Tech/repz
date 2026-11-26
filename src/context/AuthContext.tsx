@@ -3,7 +3,8 @@ import type { User, Session } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import {
   fetchRepresentativeClassData,
-  signInWithGoogle,
+  requestPasswordReset as apiRequestPasswordReset,
+  signInWithUsername,
   signOutFromSupabase,
 } from '../services/authService';
 import { CLASS_PROFILE } from '../data/mockData';
@@ -18,16 +19,18 @@ interface AuthContextValue {
   user: User | null;
   authError: string | null;
   isConfigured: boolean;
-  loginWithGoogle: () => Promise<void>;
+  loginWithUsername: (username: string, password: string, rememberMe?: boolean) => Promise<void>;
+  requestPasswordReset: (usernameOrEmail: string) => Promise<{ success: boolean; maskedEmail: string }>;
   signOut: () => Promise<void>;
   clearAuthError: () => void;
-  // Fallback demo simulator for development environments where live Supabase is not yet populated
-  simulateRepLogin: (repEmail: string) => Promise<void>;
+  // Fallback demo simulator for development/testing environments
+  simulateRepLogin: (usernameOrEmail: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 const LOCAL_SESSION_KEY = 'repz_local_session';
+const REMEMBERED_USERNAME_KEY = 'repz_remembered_username';
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [_session, setSession] = useState<Session | null>(null);
@@ -70,7 +73,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         }
 
-        // Listen for live auth state changes (Google OAuth redirect, token refresh, signout)
+        // Listen for live auth state changes (sign-in, token refresh, sign-out)
         const { data: authListener } = supabase.auth.onAuthStateChange(
           async (event, currentSession) => {
             if (!isMounted) return;
@@ -91,11 +94,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           authListener.subscription.unsubscribe();
         };
       } else {
-        // In local/preview mode when Supabase env variables are not yet configured:
-        // Check if an authorized representative was previously signed in via local storage
-        const savedRepEmail = localStorage.getItem(LOCAL_SESSION_KEY);
-        if (savedRepEmail) {
-          await verifyLocalRepresentative(savedRepEmail);
+        // In preview/local mode when Supabase is not configured yet
+        const savedRepIdentifier = localStorage.getItem(LOCAL_SESSION_KEY);
+        if (savedRepIdentifier) {
+          await verifyLocalRepresentative(savedRepIdentifier);
         } else {
           setIsAuthenticated(false);
           setIsLoading(false);
@@ -111,13 +113,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   /**
-   * Validates Supabase Google Auth User against the representative database.
-   * Only authorized representative email addresses are granted access.
+   * Validates Supabase Auth User against the representative database.
+   * Only authorized representative accounts are granted access.
    */
   async function verifyRepresentative(authUser: User) {
     const email = authUser.email;
     if (!email) {
-      setAuthError('Google user profile does not provide a valid email address.');
+      setAuthError('User profile does not provide a valid email address.');
       setIsAuthenticated(false);
       setIsLoading(false);
       await signOutFromSupabase();
@@ -147,16 +149,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }
 
   /**
-   * Local verification matching the same authorization rule (only authorized rep emails)
+   * Local verification for development/preview matching representative username or email
    */
-  async function verifyLocalRepresentative(email: string) {
-    const normalized = email.toLowerCase().trim();
+  async function verifyLocalRepresentative(usernameOrEmail: string) {
+    const normalized = usernameOrEmail.toLowerCase().trim();
     const reps = CLASS_PROFILE.representatives;
-    const match = reps.find((r) => r.email.toLowerCase() === normalized);
+    const match = reps.find(
+      (r) =>
+        r.email.toLowerCase() === normalized ||
+        (r.username && r.username.toLowerCase() === normalized)
+    );
 
     if (!match) {
       setAuthError(
-        `Unauthorized: '${email}' is not an authorized representative for ${CLASS_PROFILE.classCode}.`
+        `Unauthorized: '${usernameOrEmail}' is not an authorized representative for ${CLASS_PROFILE.classCode}.`
       );
       localStorage.removeItem(LOCAL_SESSION_KEY);
       setIsAuthenticated(false);
@@ -173,22 +179,64 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsLoading(false);
   }
 
-  const loginWithGoogle = async () => {
+  /**
+   * Username and Password Login handler
+   */
+  const loginWithUsername = async (username: string, password: string, rememberMe = false) => {
     setAuthError(null);
-    if (isSupabaseConfigured && supabase) {
-      await signInWithGoogle();
+    setIsLoading(true);
+
+    // Save or clear remembered username (passwords are NEVER stored in localStorage)
+    if (rememberMe) {
+      localStorage.setItem(REMEMBERED_USERNAME_KEY, username.trim());
     } else {
-      throw new Error(
-        'Supabase is not configured yet. Please configure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.'
-      );
+      localStorage.removeItem(REMEMBERED_USERNAME_KEY);
+    }
+
+    if (isSupabaseConfigured && supabase) {
+      try {
+        await signInWithUsername(username, password);
+        // On success, Supabase onAuthStateChange will fire and call verifyRepresentative
+      } catch (err: unknown) {
+        setIsLoading(false);
+        const msg = err instanceof Error ? err.message : 'Invalid representative username or password.';
+        setAuthError(msg);
+        throw err;
+      }
+    } else {
+      // Local preview fallback: validate password and username against mock representatives
+      if (password.length < 4) {
+        setIsLoading(false);
+        const msg = 'Password must be at least 4 characters.';
+        setAuthError(msg);
+        throw new Error(msg);
+      }
+
+      localStorage.setItem(LOCAL_SESSION_KEY, username.trim());
+      await verifyLocalRepresentative(username.trim());
     }
   };
 
-  const simulateRepLogin = async (repEmail: string) => {
+  /**
+   * Request password reset link for username or registered recovery email
+   */
+  const requestPasswordReset = async (usernameOrEmail: string) => {
+    if (isSupabaseConfigured && supabase) {
+      return await apiRequestPasswordReset(usernameOrEmail);
+    } else {
+      // Local preview mock
+      return {
+        success: true,
+        maskedEmail: 're****@college.edu',
+      };
+    }
+  };
+
+  const simulateRepLogin = async (usernameOrEmail: string) => {
     setIsLoading(true);
     setAuthError(null);
-    localStorage.setItem(LOCAL_SESSION_KEY, repEmail);
-    await verifyLocalRepresentative(repEmail);
+    localStorage.setItem(LOCAL_SESSION_KEY, usernameOrEmail);
+    await verifyLocalRepresentative(usernameOrEmail);
   };
 
   const signOut = async () => {
@@ -219,7 +267,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user,
         authError,
         isConfigured: isSupabaseConfigured,
-        loginWithGoogle,
+        loginWithUsername,
+        requestPasswordReset,
         signOut,
         clearAuthError,
         simulateRepLogin,

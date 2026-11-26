@@ -19,6 +19,7 @@ export const CLASS_PROFILE: ClassProfile = {
   representatives: [
     {
       id: 'rep-1',
+      username: 'aarav.rep',
       fullName: 'Aarav Menon',
       rollNumber: '24CS001',
       email: 'aarav.menon@college.edu',
@@ -30,6 +31,7 @@ export const CLASS_PROFILE: ClassProfile = {
     },
     {
       id: 'rep-2',
+      username: 'priya.rep',
       fullName: 'Priya Nair',
       rollNumber: '24CS034',
       email: 'priya.nair@college.edu',

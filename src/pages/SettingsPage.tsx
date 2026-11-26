@@ -257,7 +257,7 @@ export const SettingsPage: React.FC = () => {
                   Supabase Auth &amp; RLS Status
                 </p>
                 <Badge variant={isSupabaseConfigured ? 'success' : 'primary'}>
-                  {isSupabaseConfigured ? 'Live Google OAuth' : 'Ready for Keys'}
+                  {isSupabaseConfigured ? 'Live Supabase Auth' : 'Ready for Keys'}
                 </Badge>
               </div>
               <p className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">

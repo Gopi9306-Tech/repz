@@ -2,6 +2,7 @@ export type RepSlot = 'Primary Rep' | 'Co-Rep';
 
 export interface Representative {
   id: string;
+  username?: string;
   fullName: string;
   rollNumber: string;
   email: string;
